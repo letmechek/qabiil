@@ -19,98 +19,100 @@ export async function getRelativesGraph(
   sourcePersonId: number,
   ancestorsDepth: number,
   descendantsDepth: number,
+  options?: {
+    includeSiblings?: boolean;
+    includeDescendants?: boolean;
+  },
 ) {
+  const includeSiblings = options?.includeSiblings ?? true;
+  const includeDescendants = options?.includeDescendants ?? true;
   const nodes = new Map<number, PersonDoc>();
   const edges: Array<{ from: number; to: number; type: "PARENT" | "CHILD" }> = [];
   const edgeKeys = new Set<string>();
 
   const start = await getPersonById(sourcePersonId);
-  if (!start) return { nodes: [], edges: [] };
+  if (!start) return { nodes: [], edges: [], lineage: [] };
 
   nodes.set(start.source_person_id, start);
-  const startParentIds = [getParentId(start, "father"), getParentId(start, "mother")].filter(
-    (id): id is number => typeof id === "number",
-  );
+  const lineage = getLineageEntries(start);
+  const chainIds = getGenealogyChainIds(start);
 
-  const ancestorQueue: Array<{ id: number; depth: number }> = [{
-    id: sourcePersonId,
-    depth: 0,
-  }];
+  for (const id of chainIds) {
+    const person = id === sourcePersonId ? start : await getPersonById(id);
+    if (person) nodes.set(id, person);
+  }
 
-  while (ancestorQueue.length) {
-    const { id, depth } = ancestorQueue.shift()!;
-    if (depth >= ancestorsDepth) continue;
-
-    const person = nodes.get(id) ?? (await getPersonById(id));
-    if (!person) continue;
-
-    const parentIds = [getParentId(person, "father"), getParentId(person, "mother")];
-    for (const parentId of parentIds) {
-      if (typeof parentId !== "number") continue;
-      if (parentId === id) continue;
-      const parent = await getPersonById(parentId);
-      if (!parent) continue;
-      nodes.set(parent.source_person_id, parent);
-      const edgeKey = `${parent.source_person_id}->${id}`;
-      if (!edgeKeys.has(edgeKey)) {
-        edges.push({ from: parent.source_person_id, to: id, type: "PARENT" });
-        edgeKeys.add(edgeKey);
-      }
-      ancestorQueue.push({ id: parent.source_person_id, depth: depth + 1 });
+  // Build authoritative ancestor edges from genealogy order:
+  // genealogy[1] is direct parent of genealogy[0], etc.
+  for (let i = 1; i < chainIds.length; i += 1) {
+    const parentId = chainIds[i];
+    const childId = chainIds[i - 1];
+    if (parentId === childId) continue;
+    const edgeKey = `${parentId}->${childId}`;
+    if (!edgeKeys.has(edgeKey)) {
+      edges.push({ from: parentId, to: childId, type: "PARENT" });
+      edgeKeys.add(edgeKey);
     }
   }
 
-  const descendantQueue: Array<{ id: number; depth: number }> = [{
-    id: sourcePersonId,
-    depth: 0,
-  }];
+  if (includeDescendants) {
+    const descendantQueue: Array<{ id: number; depth: number }> = [{
+      id: sourcePersonId,
+      depth: 0,
+    }];
 
-  while (descendantQueue.length) {
-    const { id, depth } = descendantQueue.shift()!;
-    if (depth >= descendantsDepth) continue;
+    while (descendantQueue.length) {
+      const { id, depth } = descendantQueue.shift()!;
+      if (depth >= descendantsDepth) continue;
 
-    const person = nodes.get(id) ?? (await getPersonById(id));
-    if (!person) continue;
+      const person = nodes.get(id) ?? (await getPersonById(id));
+      if (!person) continue;
 
-    const childIds = getChildrenIds(person);
-    if (!childIds.length) continue;
+      const childIds = await getChildrenIdsForPerson(id, person);
+      if (!childIds.length) continue;
 
-    for (const childId of childIds) {
-      if (childId === id) continue;
-      const child = await getPersonById(childId);
-      if (!child) continue;
-      nodes.set(child.source_person_id, child);
-      const edgeKey = `${id}->${child.source_person_id}`;
-      if (!edgeKeys.has(edgeKey)) {
-        edges.push({ from: id, to: child.source_person_id, type: "CHILD" });
-        edgeKeys.add(edgeKey);
-      }
-      descendantQueue.push({ id: child.source_person_id, depth: depth + 1 });
-    }
-  }
-
-  const siblingIds = getSiblingIds(start);
-  for (const siblingId of siblingIds) {
-    if (siblingId === sourcePersonId) continue;
-    const sibling = await getPersonById(siblingId);
-    if (!sibling) continue;
-    nodes.set(sibling.source_person_id, sibling);
-
-    if (startParentIds.length) {
-      for (const parentId of startParentIds) {
-        const edgeKey = `${parentId}->${sibling.source_person_id}`;
+      for (const childId of childIds) {
+        if (childId === id) continue;
+        const child = await getPersonById(childId);
+        if (!child) continue;
+        nodes.set(child.source_person_id, child);
+        const edgeKey = `${id}->${child.source_person_id}`;
         if (!edgeKeys.has(edgeKey)) {
-          edges.push({ from: parentId, to: sibling.source_person_id, type: "CHILD" });
+          edges.push({ from: id, to: child.source_person_id, type: "CHILD" });
           edgeKeys.add(edgeKey);
         }
+        descendantQueue.push({ id: child.source_person_id, depth: depth + 1 });
       }
-      continue;
     }
+  }
 
-    const siblingEdge = `${sourcePersonId}->${sibling.source_person_id}`;
-    if (!edgeKeys.has(siblingEdge)) {
-      edges.push({ from: sourcePersonId, to: sibling.source_person_id, type: "CHILD" });
-      edgeKeys.add(siblingEdge);
+  if (includeSiblings) {
+    const siblingRefs = getSiblingRefs(start);
+    for (const siblingRef of siblingRefs) {
+      if (siblingRef.source_person_id === sourcePersonId) continue;
+      const sibling = await getPersonById(siblingRef.source_person_id);
+      if (!sibling) continue;
+      nodes.set(sibling.source_person_id, sibling);
+
+      const parentIdFromLineage = chainIds[1];
+      if (typeof parentIdFromLineage === "number") {
+        const edgeKey = `${parentIdFromLineage}->${sibling.source_person_id}`;
+        if (!edgeKeys.has(edgeKey)) {
+          edges.push({ from: parentIdFromLineage, to: sibling.source_person_id, type: "CHILD" });
+          edgeKeys.add(edgeKey);
+        }
+      } else {
+        const parentIds = [getParentId(start, "father"), getParentId(start, "mother")].filter(
+          (id): id is number => typeof id === "number",
+        );
+        for (const parentId of parentIds) {
+          const edgeKey = `${parentId}->${sibling.source_person_id}`;
+          if (!edgeKeys.has(edgeKey)) {
+            edges.push({ from: parentId, to: sibling.source_person_id, type: "CHILD" });
+            edgeKeys.add(edgeKey);
+          }
+        }
+      }
     }
   }
 
@@ -120,7 +122,64 @@ export async function getRelativesGraph(
       name: node.name ?? node.names?.[0] ?? null,
     })),
     edges,
+    lineage,
   };
+}
+
+function getGenealogyChainIds(person: PersonDoc) {
+  const ids: number[] = [person.source_person_id];
+  const entries = Array.isArray(person.genealogy) ? person.genealogy : [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const index = (entry as { index?: unknown }).index;
+    const entryId = (entry as { source_person_id?: unknown }).source_person_id;
+    if (typeof index !== "number" || index < 2) continue;
+    if (typeof entryId !== "number") continue;
+    if (ids.includes(entryId)) continue;
+    ids.push(entryId);
+  }
+
+  // If no genealogy IDs are present, fallback to parent traversal depth.
+  if (ids.length === 1) {
+    const fallbackParentId = getParentId(person, "father") ?? getParentId(person, "mother");
+    if (typeof fallbackParentId === "number") ids.push(fallbackParentId);
+  }
+
+  return ids;
+}
+
+function getLineageEntries(person: PersonDoc) {
+  const entries = Array.isArray(person.genealogy) ? person.genealogy : [];
+  if (!entries.length) {
+    return [
+      {
+        index: 1,
+        name: person.name ?? person.names?.[0] ?? `Person ${person.source_person_id}`,
+        source_person_id: person.source_person_id,
+        relation_text: person.name ?? "",
+      },
+    ];
+  }
+
+  return entries
+    .slice()
+    .sort((a, b) => {
+      const ai = typeof a?.index === "number" ? a.index : 99999;
+      const bi = typeof b?.index === "number" ? b.index : 99999;
+      return ai - bi;
+    })
+    .map((entry, idx) => ({
+      index: typeof entry?.index === "number" ? entry.index : idx + 1,
+      name: typeof entry?.name === "string" ? entry.name : `Person ${idx + 1}`,
+      source_person_id:
+        typeof entry?.source_person_id === "number"
+          ? entry.source_person_id
+          : idx === 0
+            ? person.source_person_id
+            : null,
+      relation_text: typeof entry?.relation_text === "string" ? entry.relation_text : "",
+    }));
 }
 
 function getParentId(person: PersonDoc, side: "father" | "mother") {
@@ -155,29 +214,77 @@ function getChildrenIds(person: PersonDoc) {
   return Array.from(ids);
 }
 
-function getSiblingIds(person: PersonDoc) {
+async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDoc) {
   const ids = new Set<number>();
+
+  if (person) {
+    for (const id of getChildrenIds(person)) ids.add(id);
+  }
+
+  const people = await peopleCollection();
+  const reverseChildren = await people
+    .find(
+      {
+        source: "abtirsi",
+        $or: [
+          { "father.source_person_id": sourcePersonId },
+          { "mother.source_person_id": sourcePersonId },
+          { father_id: sourcePersonId },
+          { mother_id: sourcePersonId },
+        ],
+      },
+      { projection: { source_person_id: 1 } },
+    )
+    .limit(2000)
+    .toArray();
+
+  for (const child of reverseChildren) {
+    if (typeof child.source_person_id === "number") ids.add(child.source_person_id);
+  }
+
+  return Array.from(ids);
+}
+
+export async function getDirectDescendants(sourcePersonId: number) {
+  const person = await getPersonById(sourcePersonId);
+  const ids = await getChildrenIdsForPerson(sourcePersonId, person ?? undefined);
+  const people = await Promise.all(ids.map((id) => getPersonById(id)));
+  const out = people
+    .filter((child): child is NonNullable<typeof child> => Boolean(child))
+    .map((child) => ({
+      source_person_id: child.source_person_id,
+      name: child.name ?? child.names?.[0] ?? `Person ${child.source_person_id}`,
+    }));
+
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getSiblingRefs(person: PersonDoc) {
+  const refs = new Map<number, { source_person_id: number; name?: string }>();
   const groups = person.siblings_groups ?? [];
 
   for (const group of groups) {
     const legacyIds = (group as { sibling_ids?: unknown }).sibling_ids;
     if (Array.isArray(legacyIds)) {
       for (const id of legacyIds) {
-        if (typeof id === "number") ids.add(id);
+        if (typeof id === "number" && !refs.has(id)) refs.set(id, { source_person_id: id });
       }
     }
 
-    const refs = (group as { siblings?: Array<{ source_person_id?: unknown }> }).siblings;
-    if (Array.isArray(refs)) {
-      for (const sibling of refs) {
+    const siblings = (group as { siblings?: Array<{ source_person_id?: unknown; name?: unknown }> }).siblings;
+    if (Array.isArray(siblings)) {
+      for (const sibling of siblings) {
         if (typeof sibling?.source_person_id === "number") {
-          ids.add(sibling.source_person_id);
+          refs.set(sibling.source_person_id, {
+            source_person_id: sibling.source_person_id,
+            name: typeof sibling.name === "string" ? sibling.name : undefined,
+          });
         }
       }
     }
   }
 
-  return Array.from(ids);
+  return Array.from(refs.values());
 }
 
 export async function allocateNextPersonId() {

@@ -14,6 +14,7 @@ import {
   type Node,
   Position,
 } from "@xyflow/react";
+import { useRouter } from "next/navigation";
 
 type GraphNode = { source_person_id: number; name?: string | null };
 type GraphEdge = { from: number; to: number; type: string };
@@ -52,8 +53,21 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
 
   dagre.layout(graph);
 
+  const nameCount = new Map<string, number>();
+  nodes.forEach((node) => {
+    const key = (node.name ?? "").trim().toLowerCase();
+    if (!key) return;
+    nameCount.set(key, (nameCount.get(key) ?? 0) + 1);
+  });
+
   const rfNodes: Node[] = nodes.map((node) => {
     const gNode = graph.node(String(node.source_person_id));
+    const normalized = (node.name ?? "").trim().toLowerCase();
+    const duplicateName = normalized ? (nameCount.get(normalized) ?? 0) > 1 : false;
+    const label = duplicateName
+      ? `${node.name ?? `Person ${node.source_person_id}`} (#${node.source_person_id})`
+      : node.name ?? `Person ${node.source_person_id}`;
+
     return {
       id: String(node.source_person_id),
       position: {
@@ -63,7 +77,7 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
       data: {
-        label: node.name ?? `Person ${node.source_person_id}`,
+        label,
       },
       style: {
         width: NODE_WIDTH,
@@ -103,11 +117,20 @@ export function PersonTree({
   nodes: GraphNode[];
   edges: GraphEdge[];
 }) {
+  const router = useRouter();
   const { rfNodes, rfEdges } = useMemo(() => buildLayout(nodes, edges), [nodes, edges]);
 
   return (
     <div className="h-[70vh] w-full rounded-2xl border border-slate-200 bg-white">
-      <ReactFlow nodes={rfNodes} edges={rfEdges} fitView fitViewOptions={{ padding: 0.15 }}>
+      <ReactFlow
+        nodes={rfNodes}
+        edges={rfEdges}
+        fitView
+        fitViewOptions={{ padding: 0.15 }}
+        onNodeClick={(_, node) => {
+          router.push(`/tree/${node.id}`);
+        }}
+      >
         <MiniMap pannable zoomable />
         <Controls />
         <Background color="#cbd5e1" gap={42} size={1.5} />
