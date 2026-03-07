@@ -14,15 +14,42 @@ import {
   type Node,
   Position,
 } from "@xyflow/react";
-import { useRouter } from "next/navigation";
 
 type GraphNode = { source_person_id: number; name?: string | null };
 type GraphEdge = { from: number; to: number; type: string };
+type TreeNodeData = { label: string; representedIds: number[] };
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 72;
 
-function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/["']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildLayout(nodes: GraphNode[], edges: GraphEdge[], mergeByName: boolean) {
+  const visualNodes = new Map<string, { id: string; label: string; representedIds: number[] }>();
+  const visualIdBySource = new Map<number, string>();
+
+  for (const node of nodes) {
+    const label = node.name ?? `Person ${node.source_person_id}`;
+    const normalized = normalizeName(label);
+    const visualId = mergeByName && normalized ? `name:${normalized}` : `id:${node.source_person_id}`;
+    const existing = visualNodes.get(visualId);
+
+    if (!existing) {
+      visualNodes.set(visualId, { id: visualId, label, representedIds: [node.source_person_id] });
+    } else {
+      existing.representedIds.push(node.source_person_id);
+      if (label.length > existing.label.length) existing.label = label;
+    }
+
+    visualIdBySource.set(node.source_person_id, visualId);
+  }
+
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
   graph.setGraph({
@@ -33,43 +60,34 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
     marginy: 24,
   });
 
-  nodes.forEach((node) => {
-    graph.setNode(String(node.source_person_id), {
+  Array.from(visualNodes.values()).forEach((node) => {
+    graph.setNode(node.id, {
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
     });
   });
 
-  const uniqueEdges = new Map<string, GraphEdge>();
+  const uniqueEdges = new Map<string, { source: string; target: string }>();
   edges.forEach((edge) => {
     if (edge.from === edge.to) return;
-    const key = `${edge.from}->${edge.to}`;
-    if (!uniqueEdges.has(key)) uniqueEdges.set(key, edge);
+    const source = visualIdBySource.get(edge.from);
+    const target = visualIdBySource.get(edge.to);
+    if (!source || !target || source === target) return;
+    const key = `${source}->${target}`;
+    if (!uniqueEdges.has(key)) uniqueEdges.set(key, { source, target });
   });
 
   uniqueEdges.forEach((edge) => {
-    graph.setEdge(String(edge.from), String(edge.to));
+    graph.setEdge(edge.source, edge.target);
   });
 
   dagre.layout(graph);
 
-  const nameCount = new Map<string, number>();
-  nodes.forEach((node) => {
-    const key = (node.name ?? "").trim().toLowerCase();
-    if (!key) return;
-    nameCount.set(key, (nameCount.get(key) ?? 0) + 1);
-  });
-
-  const rfNodes: Node[] = nodes.map((node) => {
-    const gNode = graph.node(String(node.source_person_id));
-    const normalized = (node.name ?? "").trim().toLowerCase();
-    const duplicateName = normalized ? (nameCount.get(normalized) ?? 0) > 1 : false;
-    const label = duplicateName
-      ? `${node.name ?? `Person ${node.source_person_id}`} (#${node.source_person_id})`
-      : node.name ?? `Person ${node.source_person_id}`;
-
+  const rfNodes: Node<TreeNodeData>[] = Array.from(visualNodes.values()).map((node) => {
+    const gNode = graph.node(node.id);
+    const label = node.representedIds.length > 1 ? `${node.label} (${node.representedIds.length})` : node.label;
     return {
-      id: String(node.source_person_id),
+      id: node.id,
       position: {
         x: (gNode?.x ?? 0) - NODE_WIDTH / 2,
         y: (gNode?.y ?? 0) - NODE_HEIGHT / 2,
@@ -78,6 +96,7 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
       targetPosition: Position.Top,
       data: {
         label,
+        representedIds: node.representedIds,
       },
       style: {
         width: NODE_WIDTH,
@@ -93,9 +112,9 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
   });
 
   const rfEdges: Edge[] = Array.from(uniqueEdges.values()).map((edge, index) => ({
-    id: `${edge.from}-${edge.to}-${index}`,
-    source: String(edge.from),
-    target: String(edge.to),
+    id: `${edge.source}-${edge.target}-${index}`,
+    source: edge.source,
+    target: edge.target,
     type: "smoothstep",
     animated: false,
     markerEnd: {
@@ -113,12 +132,37 @@ function buildLayout(nodes: GraphNode[], edges: GraphEdge[]) {
 export function PersonTree({
   nodes,
   edges,
+  activeNodeId,
+  onNodeSelect,
+  mergeByName = false,
 }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  activeNodeId?: number;
+  onNodeSelect?: (id: number) => void;
+  mergeByName?: boolean;
 }) {
-  const router = useRouter();
-  const { rfNodes, rfEdges } = useMemo(() => buildLayout(nodes, edges), [nodes, edges]);
+  const { rfNodes, rfEdges } = useMemo(() => {
+    const layout = buildLayout(nodes, edges, mergeByName);
+    if (typeof activeNodeId !== "number") return layout;
+
+    return {
+      ...layout,
+      rfNodes: layout.rfNodes.map((node) => {
+        const represented = (node.data as TreeNodeData | undefined)?.representedIds ?? [];
+        if (!represented.includes(activeNodeId)) return node;
+        return {
+          ...node,
+          style: {
+            ...node.style,
+            background: "#ecfeff",
+            border: "2px solid #0891b2",
+            boxShadow: "0 0 0 4px rgba(6, 182, 212, 0.18)",
+          },
+        };
+      }),
+    };
+  }, [nodes, edges, activeNodeId, mergeByName]);
 
   return (
     <div className="h-[70vh] w-full rounded-2xl border border-slate-200 bg-white">
@@ -128,7 +172,15 @@ export function PersonTree({
         fitView
         fitViewOptions={{ padding: 0.15 }}
         onNodeClick={(_, node) => {
-          router.push(`/tree/${node.id}`);
+          const represented = ((node.data as TreeNodeData | undefined)?.representedIds ?? []).filter((id) =>
+            Number.isInteger(id),
+          );
+          if (!onNodeSelect || represented.length === 0) return;
+          if (typeof activeNodeId === "number" && represented.includes(activeNodeId)) {
+            onNodeSelect(activeNodeId);
+            return;
+          }
+          onNodeSelect(represented[0]);
         }}
       >
         <MiniMap pannable zoomable />

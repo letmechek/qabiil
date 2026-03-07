@@ -15,6 +15,86 @@ export async function getPersonById(sourcePersonId: number) {
   return people.findOne({ source: "abtirsi", source_person_id: sourcePersonId });
 }
 
+async function getPeopleByIds(sourcePersonIds: number[]) {
+  if (!sourcePersonIds.length) return new Map<number, PersonDoc>();
+  const people = await peopleCollection();
+  const docs = await people
+    .find(
+      { source: "abtirsi", source_person_id: { $in: sourcePersonIds } },
+      {
+        projection: {
+          source_person_id: 1,
+          name: 1,
+          names: 1,
+          father: 1,
+          mother: 1,
+          father_id: 1,
+          mother_id: 1,
+          children_group: 1,
+          children_groups: 1,
+          siblings_groups: 1,
+          genealogy: 1,
+        },
+      },
+    )
+    .toArray();
+
+  return new Map(docs.map((doc) => [doc.source_person_id, doc]));
+}
+
+async function getChildrenLinksForParents(parentIds: number[], knownParents?: Map<number, PersonDoc>) {
+  const links = new Map<number, Set<number>>();
+  const parentSet = new Set(parentIds);
+  for (const id of parentIds) links.set(id, new Set<number>());
+
+  if (!parentIds.length) return links;
+
+  const people = await peopleCollection();
+  const reverseChildren = await people
+    .find(
+      {
+        source: "abtirsi",
+        $or: [
+          { "father.source_person_id": { $in: parentIds } },
+          { "mother.source_person_id": { $in: parentIds } },
+          { father_id: { $in: parentIds } },
+          { mother_id: { $in: parentIds } },
+        ],
+      },
+      { projection: { source_person_id: 1, father: 1, mother: 1, father_id: 1, mother_id: 1 } },
+    )
+    .toArray();
+
+  for (const child of reverseChildren) {
+    const childId = child.source_person_id;
+    if (typeof childId !== "number") continue;
+
+    const possibleParents = [
+      typeof child.father?.source_person_id === "number" ? child.father.source_person_id : null,
+      typeof child.mother?.source_person_id === "number" ? child.mother.source_person_id : null,
+      typeof child.father_id === "number" ? child.father_id : null,
+      typeof child.mother_id === "number" ? child.mother_id : null,
+    ];
+
+    for (const parentId of possibleParents) {
+      if (typeof parentId !== "number" || !parentSet.has(parentId)) continue;
+      links.get(parentId)?.add(childId);
+    }
+  }
+
+  if (knownParents) {
+    for (const parentId of parentIds) {
+      const parent = knownParents.get(parentId);
+      if (!parent) continue;
+      for (const childId of getChildrenIds(parent)) {
+        links.get(parentId)?.add(childId);
+      }
+    }
+  }
+
+  return links;
+}
+
 export async function getRelativesGraph(
   sourcePersonId: number,
   ancestorsDepth: number,
@@ -30,17 +110,16 @@ export async function getRelativesGraph(
   const edges: Array<{ from: number; to: number; type: "PARENT" | "CHILD" }> = [];
   const edgeKeys = new Set<string>();
 
-  const start = await getPersonById(sourcePersonId);
+  const startMap = await getPeopleByIds([sourcePersonId]);
+  const start = startMap.get(sourcePersonId);
   if (!start) return { nodes: [], edges: [], lineage: [] };
 
   nodes.set(start.source_person_id, start);
   const lineage = getLineageEntries(start);
   const chainIds = getGenealogyChainIds(start);
 
-  for (const id of chainIds) {
-    const person = id === sourcePersonId ? start : await getPersonById(id);
-    if (person) nodes.set(id, person);
-  }
+  const chainPeople = await getPeopleByIds(chainIds);
+  for (const id of chainIds) if (chainPeople.get(id)) nodes.set(id, chainPeople.get(id)!);
 
   // Build authoritative ancestor edges from genealogy order:
   // genealogy[1] is direct parent of genealogy[0], etc.
@@ -56,41 +135,47 @@ export async function getRelativesGraph(
   }
 
   if (includeDescendants) {
-    const descendantQueue: Array<{ id: number; depth: number }> = [{
-      id: sourcePersonId,
-      depth: 0,
-    }];
+    let currentLevel = new Set<number>([sourcePersonId]);
+    let depth = 0;
 
-    while (descendantQueue.length) {
-      const { id, depth } = descendantQueue.shift()!;
-      if (depth >= descendantsDepth) continue;
-
-      const person = nodes.get(id) ?? (await getPersonById(id));
-      if (!person) continue;
-
-      const childIds = await getChildrenIdsForPerson(id, person);
-      if (!childIds.length) continue;
-
-      for (const childId of childIds) {
-        if (childId === id) continue;
-        const child = await getPersonById(childId);
-        if (!child) continue;
-        nodes.set(child.source_person_id, child);
-        const edgeKey = `${id}->${child.source_person_id}`;
-        if (!edgeKeys.has(edgeKey)) {
-          edges.push({ from: id, to: child.source_person_id, type: "CHILD" });
-          edgeKeys.add(edgeKey);
-        }
-        descendantQueue.push({ id: child.source_person_id, depth: depth + 1 });
+    while (currentLevel.size && depth < descendantsDepth) {
+      const parentIds = Array.from(currentLevel);
+      const parentDocs = new Map<number, PersonDoc>();
+      for (const parentId of parentIds) {
+        const parent = nodes.get(parentId);
+        if (parent) parentDocs.set(parentId, parent);
       }
+
+      const links = await getChildrenLinksForParents(parentIds, parentDocs);
+      const nextLevel = new Set<number>();
+
+      for (const parentId of parentIds) {
+        const childIds = Array.from(links.get(parentId) ?? []);
+        for (const childId of childIds) {
+          if (childId === parentId) continue;
+          const edgeKey = `${parentId}->${childId}`;
+          if (!edgeKeys.has(edgeKey)) {
+            edges.push({ from: parentId, to: childId, type: "CHILD" });
+            edgeKeys.add(edgeKey);
+          }
+          nextLevel.add(childId);
+        }
+      }
+
+      const missingChildIds = Array.from(nextLevel).filter((id) => !nodes.has(id));
+      const childDocs = await getPeopleByIds(missingChildIds);
+      childDocs.forEach((doc) => nodes.set(doc.source_person_id, doc));
+      currentLevel = nextLevel;
+      depth += 1;
     }
   }
 
   if (includeSiblings) {
     const siblingRefs = getSiblingRefs(start);
+    const siblingDocs = await getPeopleByIds(siblingRefs.map((s) => s.source_person_id));
     for (const siblingRef of siblingRefs) {
       if (siblingRef.source_person_id === sourcePersonId) continue;
-      const sibling = await getPersonById(siblingRef.source_person_id);
+      const sibling = siblingDocs.get(siblingRef.source_person_id);
       if (!sibling) continue;
       nodes.set(sibling.source_person_id, sibling);
 
@@ -246,11 +331,11 @@ async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDo
 }
 
 export async function getDirectDescendants(sourcePersonId: number) {
-  const person = await getPersonById(sourcePersonId);
+  const personMap = await getPeopleByIds([sourcePersonId]);
+  const person = personMap.get(sourcePersonId);
   const ids = await getChildrenIdsForPerson(sourcePersonId, person ?? undefined);
-  const people = await Promise.all(ids.map((id) => getPersonById(id)));
-  const out = people
-    .filter((child): child is NonNullable<typeof child> => Boolean(child))
+  const childMap = await getPeopleByIds(ids);
+  const out = Array.from(childMap.values())
     .map((child) => ({
       source_person_id: child.source_person_id,
       name: child.name ?? child.names?.[0] ?? `Person ${child.source_person_id}`,
