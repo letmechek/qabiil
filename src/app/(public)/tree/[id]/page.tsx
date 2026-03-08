@@ -85,6 +85,7 @@ export default async function TreePage({
           </a>
         </div>
         <TreeExplorer
+          key={`${personId}-${ancestorsDepth}-${descendantsDepth}-${view}`}
           rootPersonId={personId}
           nodes={graph.nodes}
           edges={graph.edges}
