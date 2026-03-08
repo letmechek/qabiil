@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type SearchResult = {
+  _id: string;
   id: number;
   name: string;
   lineage_first_name: string | null;
@@ -97,7 +98,7 @@ export default function SearchPage() {
               <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
                 {suggestions.map((person) => (
                   <button
-                    key={`${person.id}-${person.name}`}
+                    key={person._id}
                     type="button"
                     className="flex w-full items-start justify-between border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50"
                     onMouseDown={(event) => event.preventDefault()}
@@ -137,7 +138,7 @@ export default function SearchPage() {
 
       <section className="mt-4 grid gap-3">
         {results.map((person) => (
-          <Link key={person.id} className="card p-4" href={`/p/${person.id}`}>
+          <Link key={person._id} className="card p-4" href={`/p/${person.id}`}>
             <p className="font-semibold">{person.name}</p>
             <p className="text-sm text-slate-500">
               Lineage starts with: {person.lineage_first_name ?? "Unknown"}
