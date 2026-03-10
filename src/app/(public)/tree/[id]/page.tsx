@@ -38,9 +38,11 @@ function buildLineage(person: Awaited<ReturnType<typeof getPersonById>>) {
 function DescendantsList({
   node,
   rootId,
+  querySuffix,
 }: {
   node: DescendantsTreeNode;
   rootId: number;
+  querySuffix: string;
 }) {
   const isRoot = node.source_person_id === rootId;
 
@@ -49,14 +51,14 @@ function DescendantsList({
       {isRoot ? (
         <span className="font-semibold text-cyan-800">{node.name}</span>
       ) : (
-        <Link className="font-medium text-cyan-700 hover:underline" href={`/tree/${node.source_person_id}`}>
+        <Link className="font-medium text-cyan-700 hover:underline" href={`/tree/${node.source_person_id}${querySuffix}`}>
           {node.name}
         </Link>
       )}
       {node.children.length ? (
         <ul className="mt-2 ml-5 border-l border-slate-200 pl-4">
           {node.children.map((child) => (
-            <DescendantsList key={child.source_person_id} node={child} rootId={rootId} />
+            <DescendantsList key={child.source_person_id} node={child} rootId={rootId} querySuffix={querySuffix} />
           ))}
         </ul>
       ) : null}
@@ -66,17 +68,24 @@ function DescendantsList({
 
 export default async function TreePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ qline?: string; depth?: string }>;
 }) {
   const { id } = await params;
+  const query = await searchParams;
   const personId = Number(id);
+  const lineQuery = (query.qline ?? "").trim();
+  const selectedDepth = clampDepth(Number(query.depth), 12);
 
   const person = await getPersonById(personId);
   if (!person) notFound();
   const lineage = buildLineage(person);
-  const descendantsTree = await getDescendantsTree(personId, { maxDepth: 12, maxNodes: 1500 });
-  const totalDescendants = descendantsTree ? countDescendants(descendantsTree) - 1 : 0;
+  const descendantsTree = await getDescendantsTree(personId, { maxDepth: selectedDepth, maxNodes: 1500 });
+  const filteredTree = descendantsTree ? filterTreeByLine(descendantsTree, lineQuery) : null;
+  const totalDescendants = filteredTree ? countDescendants(filteredTree) - 1 : 0;
+  const querySuffix = buildQuerySuffix(lineQuery, selectedDepth);
 
   return (
     <main className="container-shell py-4">
@@ -95,7 +104,7 @@ export default async function TreePage({
               return (
                 <li key={`${entry.index}-${entry.name}`} className="text-base text-slate-800">
                   {entry.source_person_id ? (
-                    <Link className="font-semibold text-cyan-700 hover:underline" href={`/tree/${entry.source_person_id}`}>
+                    <Link className="font-semibold text-cyan-700 hover:underline" href={`/tree/${entry.source_person_id}${querySuffix}`}>
                       {entry.name}
                     </Link>
                   ) : (
@@ -113,9 +122,32 @@ export default async function TreePage({
           <p className="mt-1 text-sm text-slate-600">
             Simple father to descendants chain using full names where available.
           </p>
-          {descendantsTree ? (
+          <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]" method="get">
+            <input
+              name="qline"
+              defaultValue={lineQuery}
+              placeholder="Filter line by name (e.g. Osman Mahamud)"
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+            <select
+              name="depth"
+              defaultValue={String(selectedDepth)}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((depth) => (
+                <option key={depth} value={depth}>
+                  Depth {depth}
+                </option>
+              ))}
+            </select>
+            <button className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50" type="submit">
+              Apply
+            </button>
+          </form>
+
+          {filteredTree ? (
             <ul className="mt-4">
-              <DescendantsList node={descendantsTree} rootId={personId} />
+              <DescendantsList node={filteredTree} rootId={personId} querySuffix={querySuffix} />
             </ul>
           ) : (
             <p className="mt-3 text-sm text-slate-500">No descendants listed in this record.</p>
@@ -130,4 +162,50 @@ function countDescendants(node: DescendantsTreeNode): number {
   let count = 1;
   for (const child of node.children) count += countDescendants(child);
   return count;
+}
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/["']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function filterTreeByLine(node: DescendantsTreeNode, rawQuery: string): DescendantsTreeNode | null {
+  const query = normalizeText(rawQuery);
+  const queryTokens = query.split(" ").filter(Boolean);
+
+  const recurse = (current: DescendantsTreeNode, isRoot = false): DescendantsTreeNode | null => {
+    const filteredChildren = current.children
+      .map((child) => recurse(child, false))
+      .filter((child): child is DescendantsTreeNode => Boolean(child));
+
+    if (!queryTokens.length) {
+      return { ...current, children: filteredChildren };
+    }
+
+    const currentName = normalizeText(current.name);
+    const matchesSelf = queryTokens.every((token) => currentName.includes(token));
+    if (isRoot || matchesSelf || filteredChildren.length) {
+      return { ...current, children: filteredChildren };
+    }
+
+    return null;
+  };
+
+  return recurse(node, true);
+}
+
+function clampDepth(value: number, fallback: number) {
+  if (!Number.isInteger(value)) return fallback;
+  return Math.min(12, Math.max(1, value));
+}
+
+function buildQuerySuffix(qline: string, depth: number) {
+  const params = new URLSearchParams();
+  if (qline.trim()) params.set("qline", qline.trim());
+  if (depth !== 12) params.set("depth", String(depth));
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
