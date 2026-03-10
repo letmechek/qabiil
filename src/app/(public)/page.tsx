@@ -30,7 +30,6 @@ const MAJOR_QABILS = [
 ] as const;
 
 export default async function HomePage() {
-  const featured = await searchPeople("", 8).catch(() => []);
   const majorStarts = await Promise.all(
     MAJOR_QABILS.map(async (qabil) => {
       if (qabil.name === "Hawiye") {
@@ -132,24 +131,24 @@ export default async function HomePage() {
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold text-slate-900">Live Signal: Trending Profiles</h2>
+          <h2 className="text-xl font-semibold text-slate-900">Live Signal: Major Tribes</h2>
           <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-            {featured.length} active nodes
+            {majorStarts.length} active nodes
           </span>
         </div>
         <p className="mt-1 text-sm text-slate-600">
-          Jump directly into high-traffic lineage records.
+          Jump straight into the core tribe entry points.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {featured.map((person) => (
+          {majorStarts.map((qabil) => (
             <Link
-              key={person.id}
-              href={`/p/${person.id}`}
+              key={qabil.name}
+              href={qabil.href}
               className="group rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:-translate-y-0.5 hover:border-cyan-500 hover:bg-white"
             >
-              <p className="text-lg font-semibold text-slate-900">{person.name}</p>
-              <p className="mt-1 text-sm text-slate-500">ID: {person.id}</p>
-              <p className="mt-3 text-sm font-semibold text-cyan-700 group-hover:underline">Open profile</p>
+              <p className="text-lg font-semibold text-slate-900">{qabil.name}</p>
+              <p className="mt-1 text-sm text-slate-500">{qabil.summary}</p>
+              <p className="mt-3 text-sm font-semibold text-cyan-700 group-hover:underline">{qabil.cta}</p>
             </Link>
           ))}
         </div>

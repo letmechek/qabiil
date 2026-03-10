@@ -147,3 +147,12 @@ body {
     opacity: 0.6;
   }
 }
+
+@keyframes navLoad {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}

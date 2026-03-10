@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { Navbar } from "@/components/ui/navbar";
+import { NavigationLoadingIndicator } from "@/components/ui/navigation-loading-indicator";
 import { Providers } from "@/components/ui/providers";
 
 import "./globals.css";
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body>
         <Providers>
+          <NavigationLoadingIndicator />
           <Navbar />
           {children}
         </Providers>
