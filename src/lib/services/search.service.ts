@@ -12,6 +12,16 @@ type SearchPerson = {
   genealogy?: Array<{ index?: number; name?: string | null }> | null;
 };
 
+const SEARCH_PROJECTION = {
+  _id: 1,
+  source_person_id: 1,
+  name: 1,
+  names: 1,
+  genealogy: 1,
+  father_name: 1,
+  mother_name: 1,
+} as const;
+
 function normalizeName(value: string) {
   return value
     .toLowerCase()
@@ -142,6 +152,65 @@ function classifyGenealogy(genealogy: Array<{ index?: number; name?: string | nu
   };
 }
 
+function getNormalizedGenealogyNames(person: SearchPerson) {
+  const entries = normalizeGenealogyEntries(person.genealogy ?? []);
+  return entries.map((entry) => entry.normalizedName);
+}
+
+function getSearchableWords(person: SearchPerson) {
+  const all = [
+    person.name ?? "",
+    ...(Array.isArray(person.names) ? person.names : []),
+    ...getNormalizedGenealogyNames(person),
+  ]
+    .map((value) => normalizeName(value))
+    .join(" ")
+    .trim();
+
+  return all.split(" ").filter(Boolean);
+}
+
+function hasOrderedTokenMatch(haystack: string[], queryTokens: string[]) {
+  if (!queryTokens.length) return true;
+  let cursor = 0;
+
+  for (const part of haystack) {
+    const target = queryTokens[cursor];
+    if (!target) break;
+    if (part === target || part.startsWith(target)) cursor += 1;
+    if (cursor >= queryTokens.length) return true;
+  }
+
+  return false;
+}
+
+function scoreQueryMatch(person: SearchPerson, normalizedQuery: string, queryTokens: string[]) {
+  const nameNorm = normalizeName(person.name ?? person.names?.[0] ?? "");
+  const lineageNames = getNormalizedGenealogyNames(person);
+  const lineageText = lineageNames.join(" ").trim();
+  const lineageWords = lineageText.split(" ").filter(Boolean);
+  const searchableWords = getSearchableWords(person);
+  const searchableText = searchableWords.join(" ");
+
+  let score = 0;
+  if (nameNorm && nameNorm === normalizedQuery) score += 280;
+  if (nameNorm && nameNorm.startsWith(normalizedQuery)) score += 180;
+  if (searchableText.includes(normalizedQuery)) score += 120;
+  if (lineageText.includes(normalizedQuery)) score += 220;
+  if (hasOrderedTokenMatch(lineageWords, queryTokens)) score += 260;
+  if (queryTokens.every((token) => searchableWords.some((word) => word === token || word.startsWith(token)))) {
+    score += 80;
+  }
+
+  // For lineage-style multi-token search, require clear evidence from lineage/order/full text.
+  if (queryTokens.length >= 2) {
+    const strong = lineageText.includes(normalizedQuery) || hasOrderedTokenMatch(lineageWords, queryTokens);
+    if (!strong) return 0;
+  }
+
+  return score;
+}
+
 export async function searchPeople(query: string, limit = 20) {
   const people = await peopleCollection();
   const q = query.trim();
@@ -151,15 +220,7 @@ export async function searchPeople(query: string, limit = 20) {
       .find(
         { source: "abtirsi" },
         {
-          projection: {
-            _id: 1,
-            source_person_id: 1,
-            name: 1,
-            names: 1,
-            genealogy: 1,
-            father_name: 1,
-            mother_name: 1,
-          },
+          projection: SEARCH_PROJECTION,
         },
       )
       .sort({ source_person_id: -1 })
@@ -172,30 +233,65 @@ export async function searchPeople(query: string, limit = 20) {
 
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = new RegExp(escaped, "i");
+  const normalizedQuery = normalizeName(q);
+  const queryTokens = normalizedQuery.split(" ").filter(Boolean);
+
+  if (queryTokens.length >= 2) {
+    const firstTokenRegex = new RegExp(queryTokens[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const lineageCandidatesRaw = await people
+      .find(
+        {
+          source: "abtirsi",
+          $or: [{ name: firstTokenRegex }, { names: firstTokenRegex }, { "genealogy.name": firstTokenRegex }],
+        },
+        { projection: SEARCH_PROJECTION },
+      )
+      .limit(Math.max(limit * 25, 200))
+      .toArray();
+
+    const lineageCandidates = dedupeByObjectId(lineageCandidatesRaw);
+    const rankedLineage = lineageCandidates
+      .map((person) => ({
+        person,
+        score: scoreQueryMatch(person, normalizedQuery, queryTokens),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.person.source_person_id - b.person.source_person_id;
+      })
+      .slice(0, limit)
+      .map((entry) => entry.person);
+
+    if (rankedLineage.length) {
+      return rankedLineage.map(mapResult);
+    }
+  }
 
   const textMatchesRaw = await people
     .find(
       {
         source: "abtirsi",
-        $or: [{ name: regex }, { names: regex }, { notes_text: regex }],
+        $or: [{ name: regex }, { names: regex }, { "genealogy.name": regex }, { notes_text: regex }],
       },
-      {
-        projection: {
-          _id: 1,
-          source_person_id: 1,
-          name: 1,
-          names: 1,
-          genealogy: 1,
-          father_name: 1,
-          mother_name: 1,
-        },
-      },
+      { projection: SEARCH_PROJECTION },
     )
-    .limit(limit * 3)
+    .limit(Math.max(limit * 3, 60))
     .toArray();
-  const textMatches = dedupeByObjectId(textMatchesRaw).slice(0, limit);
 
-  return textMatches.map(mapResult);
+  const rankedText = dedupeByObjectId(textMatchesRaw)
+    .map((person) => ({
+      person,
+      score: scoreQueryMatch(person, normalizedQuery, queryTokens),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.person.source_person_id - b.person.source_person_id;
+    })
+    .slice(0, limit)
+    .map((entry) => entry.person);
+
+  return rankedText.map(mapResult);
 }
 
 export async function suggestPeopleNames(query: string, limit = 8) {
