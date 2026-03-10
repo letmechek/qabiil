@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { Navbar } from "@/components/ui/navbar";
 import { Providers } from "@/components/ui/providers";
 
 import "./globals.css";
@@ -13,7 +14,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <Navbar />
+          {children}
+        </Providers>
       </body>
     </html>
   );

@@ -66,14 +66,14 @@ async function getChildrenLinksForParents(parentIds: number[], knownParents?: Ma
     .toArray();
 
   for (const child of reverseChildren) {
-    const childId = child.source_person_id;
+    const childId = toPersonId(child.source_person_id);
     if (typeof childId !== "number") continue;
 
     const possibleParents = [
-      typeof child.father?.source_person_id === "number" ? child.father.source_person_id : null,
-      typeof child.mother?.source_person_id === "number" ? child.mother.source_person_id : null,
-      typeof child.father_id === "number" ? child.father_id : null,
-      typeof child.mother_id === "number" ? child.mother_id : null,
+      toPersonId(child.father?.source_person_id),
+      toPersonId(child.mother?.source_person_id),
+      toPersonId(child.father_id),
+      toPersonId(child.mother_id),
     ];
 
     for (const parentId of possibleParents) {
@@ -268,13 +268,11 @@ function getLineageEntries(person: PersonDoc) {
 }
 
 function getParentId(person: PersonDoc, side: "father" | "mother") {
-  const explicitId = person[`${side}_id` as keyof PersonDoc];
+  const explicitId = toPersonId(person[`${side}_id` as keyof PersonDoc]);
   if (typeof explicitId === "number") return explicitId;
 
   const ref = person[side] as { source_person_id?: unknown } | null | undefined;
-  if (typeof ref?.source_person_id === "number") return ref.source_person_id;
-
-  return null;
+  return toPersonId(ref?.source_person_id);
 }
 
 function getChildrenIds(person: PersonDoc) {
@@ -284,19 +282,98 @@ function getChildrenIds(person: PersonDoc) {
 
   for (const group of legacyGroups) {
     for (const childId of group.children_ids ?? []) {
-      if (typeof childId === "number") ids.add(childId);
+      const normalizedChildId = toPersonId(childId);
+      if (typeof normalizedChildId === "number") ids.add(normalizedChildId);
     }
   }
 
   for (const group of groupedChildren) {
     for (const child of group.children ?? []) {
-      if (typeof child?.source_person_id === "number") {
-        ids.add(child.source_person_id);
-      }
+      const childId = getRefPersonId(child);
+      if (typeof childId === "number") ids.add(childId);
     }
   }
 
   return Array.from(ids);
+}
+
+function getChildrenRefs(person: PersonDoc) {
+  const refs = new Map<number, { source_person_id: number; name?: string }>();
+  const legacyGroups = person.children_group ?? [];
+  const groupedChildren = person.children_groups ?? [];
+
+  for (const group of legacyGroups) {
+    for (const childId of group.children_ids ?? []) {
+      const normalizedChildId = toPersonId(childId);
+      if (typeof normalizedChildId !== "number" || refs.has(normalizedChildId)) continue;
+      refs.set(normalizedChildId, { source_person_id: normalizedChildId });
+    }
+  }
+
+  for (const group of groupedChildren) {
+    for (const child of group.children ?? []) {
+      const childId = getRefPersonId(child);
+      if (typeof childId !== "number") continue;
+      const childName =
+        child && typeof child === "object" && typeof (child as { name?: unknown }).name === "string"
+          ? (child as { name: string }).name
+          : undefined;
+      const existing = refs.get(childId);
+      refs.set(childId, {
+        source_person_id: childId,
+        name: pickBestName(existing?.name, childName),
+      });
+    }
+  }
+
+  return refs;
+}
+
+function getRefPersonId(ref: unknown) {
+  if (!ref || typeof ref !== "object") return null;
+
+  const candidate = ref as {
+    source_person_id?: unknown;
+    person_id?: unknown;
+    id?: unknown;
+    person?: { source_person_id?: unknown; person_id?: unknown; id?: unknown };
+  };
+
+  return (
+    toPersonId(candidate.source_person_id) ??
+    toPersonId(candidate.person_id) ??
+    toPersonId(candidate.id) ??
+    toPersonId(candidate.person?.source_person_id) ??
+    toPersonId(candidate.person?.person_id) ??
+    toPersonId(candidate.person?.id)
+  );
+}
+
+function toPersonId(value: unknown) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === "string" && /^[1-9]\d*$/.test(value.trim())) return Number(value.trim());
+  return null;
+}
+
+function pickBestName(...candidates: Array<string | null | undefined>) {
+  const normalized = candidates
+    .map((name) => (typeof name === "string" ? name.trim() : ""))
+    .filter((name) => name.length > 0);
+
+  if (!normalized.length) return undefined;
+
+  const sorted = normalized.sort((a, b) => scoreName(b) - scoreName(a));
+  return sorted[0];
+}
+
+function scoreName(name: string) {
+  const cleaned = name.replace(/\s+/g, " ").trim();
+  const tokenCount = cleaned.split(" ").filter(Boolean).length;
+  const lettersOnly = cleaned.replace(/[^A-Za-z]/g, "");
+  const uniqueChars = new Set(lettersOnly.toLowerCase().split("")).size;
+  const singleWordPenalty = tokenCount === 1 ? 20 : 0;
+
+  return tokenCount * 100 + cleaned.length + uniqueChars - singleWordPenalty;
 }
 
 async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDoc) {
@@ -333,13 +410,39 @@ async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDo
 export async function getDirectDescendants(sourcePersonId: number) {
   const personMap = await getPeopleByIds([sourcePersonId]);
   const person = personMap.get(sourcePersonId);
+  const embeddedRefs = person ? getChildrenRefs(person) : new Map<number, { source_person_id: number; name?: string }>();
   const ids = await getChildrenIdsForPerson(sourcePersonId, person ?? undefined);
   const childMap = await getPeopleByIds(ids);
-  const out = Array.from(childMap.values())
-    .map((child) => ({
+  const outMap = new Map<number, { source_person_id: number; name: string }>();
+
+  // Keep children explicitly listed in children_groups, even if no standalone person doc exists yet.
+  for (const [childId, ref] of embeddedRefs) {
+    outMap.set(childId, {
+      source_person_id: childId,
+      name: pickBestName(ref.name, `Person ${childId}`) ?? `Person ${childId}`,
+    });
+  }
+
+  for (const child of childMap.values()) {
+    const existing = outMap.get(child.source_person_id);
+    outMap.set(child.source_person_id, {
       source_person_id: child.source_person_id,
-      name: child.name ?? child.names?.[0] ?? `Person ${child.source_person_id}`,
-    }));
+      name:
+        pickBestName(existing?.name, child.name, child.names?.[0], ...(Array.isArray(child.names) ? child.names : [])) ??
+        `Person ${child.source_person_id}`,
+    });
+  }
+
+  for (const childId of ids) {
+    if (!outMap.has(childId)) {
+      outMap.set(childId, {
+        source_person_id: childId,
+        name: `Person ${childId}`,
+      });
+    }
+  }
+
+  const out = Array.from(outMap.values());
 
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }

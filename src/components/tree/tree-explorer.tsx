@@ -85,6 +85,14 @@ export function TreeExplorer({
   }, [displayDescendants]);
 
   useEffect(() => {
+    console.log("[Direct Descendants]", {
+      personId: rootPersonId,
+      count: descendants.length,
+      descendants,
+    });
+  }, [rootPersonId, descendants]);
+
+  useEffect(() => {
     if (focusedPersonId === rootPersonId) return;
     let cancelled = false;
 
@@ -133,6 +141,11 @@ export function TreeExplorer({
       const nextDescendants = Array.isArray(descendantsPayload?.descendants)
         ? descendantsPayload.descendants
         : [];
+      console.log("[Direct Descendants]", {
+        personId: focusedPersonId,
+        count: nextDescendants.length,
+        descendants: nextDescendants,
+      });
 
       setFocusedContext((prev) => ({
         ...prev,
