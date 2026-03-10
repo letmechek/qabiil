@@ -35,3 +35,115 @@ body {
   padding: 0.6rem 1rem;
   font-weight: 600;
 }
+
+.somali-future-shell {
+  background:
+    radial-gradient(70rem 35rem at -10% -10%, rgba(14, 165, 233, 0.22), rgba(14, 165, 233, 0)),
+    radial-gradient(42rem 24rem at 100% 0%, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0)),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.94), rgba(240, 249, 255, 0.95));
+}
+
+.somali-grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(14, 116, 144, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 116, 144, 0.1) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at 50% 45%, black 40%, transparent 90%);
+  pointer-events: none;
+  animation: gridPulse 8s ease-in-out infinite;
+}
+
+.somali-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(2px);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.somali-orb-top {
+  width: 18rem;
+  height: 18rem;
+  right: -4rem;
+  top: -5rem;
+  background: radial-gradient(circle, rgba(2, 132, 199, 0.35) 0%, rgba(2, 132, 199, 0) 70%);
+  animation: driftOrb 10s ease-in-out infinite;
+}
+
+.somali-orb-bottom {
+  width: 16rem;
+  height: 16rem;
+  left: -4rem;
+  bottom: -4rem;
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.26) 0%, rgba(14, 165, 233, 0) 70%);
+  animation: driftOrb 12s ease-in-out infinite reverse;
+}
+
+.somali-gradient-text {
+  background: linear-gradient(90deg, #0369a1, #0284c7 42%, #2563eb 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.search-glow-shell {
+  position: relative;
+}
+
+.search-glow-shell::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 1rem;
+  background: linear-gradient(120deg, rgba(14, 165, 233, 0.55), rgba(37, 99, 235, 0.4), rgba(14, 165, 233, 0.1));
+  z-index: -1;
+  filter: blur(12px);
+  animation: shellGlow 4s ease-in-out infinite;
+}
+
+.somali-card-anim {
+  animation: riseIn 420ms ease-out both;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes driftOrb {
+  0%,
+  100% {
+    transform: translateY(0px) translateX(0px);
+  }
+  50% {
+    transform: translateY(-10px) translateX(6px);
+  }
+}
+
+@keyframes shellGlow {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes gridPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}

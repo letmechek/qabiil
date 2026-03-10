@@ -86,7 +86,7 @@ export default function SearchPage() {
                 onBlur={() => {
                   setTimeout(() => setIsFocused(false), 120);
                 }}
-                placeholder="Search by lineage names. Example: Osman Mahamud Saleiban Mahamed"
+                placeholder="Search by lineage names. Example: Ismaeil Saleiban Mahamed"
                 className="h-12 w-full bg-transparent px-3 text-base outline-none"
               />
               <button className="btn-primary px-5 py-2.5" type="submit" disabled={loading}>

@@ -126,7 +126,7 @@ export default async function TreePage({
             <input
               name="qline"
               defaultValue={lineQuery}
-              placeholder="Filter line by name (e.g. Osman Mahamud)"
+              placeholder="Filter line by name (e.g. Ismaeil Saleiban Mahamud)"
               className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
             />
             <select
