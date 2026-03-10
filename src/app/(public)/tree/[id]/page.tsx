@@ -136,7 +136,7 @@ export default async function TreePage({
             >
               {Array.from({ length: 12 }, (_, i) => i + 1).map((depth) => (
                 <option key={depth} value={depth}>
-                  Depth {depth}
+                  Depth: {depth}
                 </option>
               ))}
             </select>
