@@ -378,9 +378,23 @@ function scoreName(name: string) {
 
 async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDoc) {
   const ids = new Set<number>();
+  const hasChildrenGroupsField =
+    !!person &&
+    (Object.prototype.hasOwnProperty.call(person, "children_groups") ||
+      Object.prototype.hasOwnProperty.call(person, "children_group"));
+  let hasExplicitChildren = false;
 
   if (person) {
-    for (const id of getChildrenIds(person)) ids.add(id);
+    for (const id of getChildrenIds(person)) {
+      ids.add(id);
+      hasExplicitChildren = true;
+    }
+  }
+
+  // If the source record has children group fields, trust that structure as authoritative.
+  // Reverse lookup is only a fallback when these fields are missing entirely.
+  if (hasChildrenGroupsField || hasExplicitChildren) {
+    return Array.from(ids);
   }
 
   const people = await peopleCollection();
