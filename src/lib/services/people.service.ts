@@ -376,6 +376,51 @@ function scoreName(name: string) {
   return tokenCount * 100 + cleaned.length + uniqueChars - singleWordPenalty;
 }
 
+function getSortedGenealogyNames(person: PersonDoc) {
+  if (!Array.isArray(person.genealogy)) return [];
+
+  return person.genealogy
+    .filter(
+      (entry): entry is { index?: unknown; name?: unknown } =>
+        !!entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string",
+    )
+    .slice()
+    .sort((a, b) => {
+      const ai = typeof a.index === "number" ? a.index : Number.MAX_SAFE_INTEGER;
+      const bi = typeof b.index === "number" ? b.index : Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    })
+    .map((entry) => (entry.name as string).trim())
+    .filter(Boolean);
+}
+
+function buildFullNameFromGenealogy(person: PersonDoc) {
+  const names = getSortedGenealogyNames(person);
+  if (names.length < 2) return undefined;
+
+  const parts: string[] = [];
+  for (const name of names) {
+    if (parts[parts.length - 1] === name) continue;
+    parts.push(name);
+    if (parts.length >= 4) break;
+  }
+
+  return parts.length >= 2 ? parts.join(" ") : undefined;
+}
+
+function getBestDescendantName(person: PersonDoc, fallback?: string) {
+  const fullFromGenealogy = buildFullNameFromGenealogy(person);
+  return (
+    pickBestName(
+      fallback,
+      fullFromGenealogy,
+      person.name,
+      person.names?.[0],
+      ...(Array.isArray(person.names) ? person.names : []),
+    ) ?? fallback
+  );
+}
+
 async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDoc) {
   const ids = new Set<number>();
   const hasChildrenGroupsField =
@@ -391,13 +436,42 @@ async function getChildrenIdsForPerson(sourcePersonId: number, person?: PersonDo
     }
   }
 
-  // If the source record has children group fields, trust that structure as authoritative.
-  // Reverse lookup is only a fallback when these fields are missing entirely.
-  if (hasChildrenGroupsField || hasExplicitChildren) {
+  // If the source record explicitly lists children, trust that list.
+  if (hasExplicitChildren) {
     return Array.from(ids);
   }
 
   const people = await peopleCollection();
+  const genealogyChildren = await people
+    .find(
+      {
+        source: "abtirsi",
+        genealogy: {
+          $elemMatch: {
+            index: 2,
+            source_person_id: sourcePersonId,
+          },
+        },
+      },
+      { projection: { source_person_id: 1 } },
+    )
+    .limit(4000)
+    .toArray();
+
+  for (const child of genealogyChildren) {
+    if (typeof child.source_person_id === "number") ids.add(child.source_person_id);
+  }
+
+  // If this record has children groups field but no explicit children, prefer genealogy-derived
+  // direct children and avoid looser reverse-parent links that can be noisy in source data.
+  if (hasChildrenGroupsField) {
+    return Array.from(ids);
+  }
+
+  if (ids.size) {
+    return Array.from(ids);
+  }
+
   const reverseChildren = await people
     .find(
       {
@@ -441,9 +515,7 @@ export async function getDirectDescendants(sourcePersonId: number) {
     const existing = outMap.get(child.source_person_id);
     outMap.set(child.source_person_id, {
       source_person_id: child.source_person_id,
-      name:
-        pickBestName(existing?.name, child.name, child.names?.[0], ...(Array.isArray(child.names) ? child.names : [])) ??
-        `Person ${child.source_person_id}`,
+      name: getBestDescendantName(child, existing?.name ?? `Person ${child.source_person_id}`) ?? `Person ${child.source_person_id}`,
     });
   }
 

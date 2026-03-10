@@ -239,6 +239,7 @@ export function TreeExplorer({
             descendantGroups.map((group) => {
               const inGraphId = group.ids.find((id) => nodeIds.has(id));
               const isActive = group.ids.includes(activeNodeId);
+              const targetId = inGraphId ?? group.ids[0];
               return (
                 <button
                   key={`${group.label}-${group.ids.join(",")}`}
@@ -255,7 +256,7 @@ export function TreeExplorer({
                       return;
                     }
                     router.push(
-                      `/tree/${rootPersonId}?ancestorsDepth=${ancestorsDepth}&descendantsDepth=${Math.min(
+                      `/tree/${targetId}?ancestorsDepth=${ancestorsDepth}&descendantsDepth=${Math.min(
                         descendantsDepth + 2,
                         12,
                       )}&view=${view}`,
