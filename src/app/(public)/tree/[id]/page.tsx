@@ -1,101 +1,133 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 
-import { TreeExplorer } from "@/components/tree/tree-explorer";
-import { getDirectDescendants, getPersonById, getRelativesGraph } from "@/lib/services/people.service";
+import { DescendantsTreeNode, getDescendantsTree, getPersonById } from "@/lib/services/people.service";
 
 export const dynamic = "force-dynamic";
 
-function parseDepth(value: string | string[] | undefined, fallback: number) {
-  const raw = Array.isArray(value) ? value[0] : value;
-  const num = Number(raw);
-  if (!Number.isInteger(num)) return fallback;
-  return Math.min(8, Math.max(1, num));
+function buildLineage(person: Awaited<ReturnType<typeof getPersonById>>) {
+  if (!person) return [];
+  const entries = Array.isArray(person.genealogy) ? person.genealogy : [];
+  if (!entries.length) {
+    return [
+      {
+        index: 1,
+        name: person.name ?? person.names?.[0] ?? `Person ${person.source_person_id}`,
+        source_person_id: person.source_person_id,
+        relation_text: person.name ?? "",
+      },
+    ];
+  }
+
+  return entries
+    .slice()
+    .sort((a, b) => Number(a?.index ?? 9999) - Number(b?.index ?? 9999))
+    .map((entry, idx) => ({
+      index: typeof entry?.index === "number" ? entry.index : idx + 1,
+      name: typeof entry?.name === "string" ? entry.name : `Person ${idx + 1}`,
+      source_person_id:
+        typeof entry?.source_person_id === "number"
+          ? entry.source_person_id
+          : idx === 0
+            ? person.source_person_id
+            : null,
+      relation_text: typeof entry?.relation_text === "string" ? entry.relation_text : "",
+    }));
 }
 
-function parseView(value: string | undefined) {
-  if (value === "chain") return "chain";
-  if (value === "chain_siblings") return "chain_siblings";
-  return "full";
+function DescendantsList({
+  node,
+  rootId,
+}: {
+  node: DescendantsTreeNode;
+  rootId: number;
+}) {
+  const isRoot = node.source_person_id === rootId;
+
+  return (
+    <li className="mb-2">
+      {isRoot ? (
+        <span className="font-semibold text-cyan-800">{node.name}</span>
+      ) : (
+        <Link className="font-medium text-cyan-700 hover:underline" href={`/tree/${node.source_person_id}`}>
+          {node.name}
+        </Link>
+      )}
+      {node.children.length ? (
+        <ul className="mt-2 ml-5 border-l border-slate-200 pl-4">
+          {node.children.map((child) => (
+            <DescendantsList key={child.source_person_id} node={child} rootId={rootId} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
 }
 
 export default async function TreePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ ancestorsDepth?: string; descendantsDepth?: string; view?: string }>;
 }) {
   const { id } = await params;
-  const query = await searchParams;
   const personId = Number(id);
-  const ancestorsDepth = parseDepth(query.ancestorsDepth, 5);
-  const descendantsDepth = parseDepth(query.descendantsDepth, 5);
-  const view = parseView(query.view);
-  const includeSiblings = view !== "chain";
-  const includeDescendants = view === "full";
 
   const person = await getPersonById(personId);
   if (!person) notFound();
-  const descendants = await getDirectDescendants(personId);
-
-  const graph = await getRelativesGraph(personId, ancestorsDepth, descendantsDepth, {
-    includeSiblings,
-    includeDescendants,
-  });
+  const lineage = buildLineage(person);
+  const descendantsTree = await getDescendantsTree(personId, { maxDepth: 12, maxNodes: 1500 });
+  const totalDescendants = descendantsTree ? countDescendants(descendantsTree) - 1 : 0;
 
   return (
     <main className="container-shell py-4">
       <section className="card p-4 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-xl font-semibold">Tree for {person.name ?? `Person ${personId}`}</h1>
-          <p className="text-sm text-slate-500">
-            Depth: {ancestorsDepth}/{descendantsDepth}
+          <p className="text-sm text-slate-500">{totalDescendants} descendants listed</p>
+        </div>
+
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+          <h2 className="text-xl font-semibold">Lineage Trace</h2>
+          <p className="mt-1 text-sm text-slate-600">Verified chain from this person upward.</p>
+          <ol className="mt-4 list-decimal space-y-2 pl-6">
+            {lineage.map((entry, idx, arr) => {
+              const childRelation = arr[idx + 1]?.relation_text ?? "";
+              return (
+                <li key={`${entry.index}-${entry.name}`} className="text-base text-slate-800">
+                  {entry.source_person_id ? (
+                    <Link className="font-semibold text-cyan-700 hover:underline" href={`/tree/${entry.source_person_id}`}>
+                      {entry.name}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold">{entry.name}</span>
+                  )}
+                  {childRelation ? <span className="ml-2 text-sm text-slate-500">({childRelation})</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+
+        <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+          <h3 className="text-lg font-semibold">Descendants Tree</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            Simple father to descendants chain using full names where available.
           </p>
-        </div>
-        <div className="mb-4 flex flex-wrap gap-2 text-sm">
-          <a
-            className="rounded-full border border-slate-300 px-3 py-1 hover:bg-slate-100"
-            href={`/tree/${personId}?ancestorsDepth=5&descendantsDepth=5&view=${view}`}
-          >
-            Standard depth
-          </a>
-          <a
-            className="rounded-full border border-slate-300 px-3 py-1 hover:bg-slate-100"
-            href={`/tree/${personId}?ancestorsDepth=8&descendantsDepth=8&view=${view}`}
-          >
-            Deeper tree
-          </a>
-          <a
-            className={`rounded-full border px-3 py-1 ${view === "chain" ? "border-cyan-600 bg-cyan-50 text-cyan-700" : "border-slate-300 hover:bg-slate-100"}`}
-            href={`/tree/${personId}?ancestorsDepth=${ancestorsDepth}&descendantsDepth=${descendantsDepth}&view=chain`}
-          >
-            Chain only
-          </a>
-          <a
-            className={`rounded-full border px-3 py-1 ${view === "chain_siblings" ? "border-cyan-600 bg-cyan-50 text-cyan-700" : "border-slate-300 hover:bg-slate-100"}`}
-            href={`/tree/${personId}?ancestorsDepth=${ancestorsDepth}&descendantsDepth=${descendantsDepth}&view=chain_siblings`}
-          >
-            Chain + siblings
-          </a>
-          <a
-            className={`rounded-full border px-3 py-1 ${view === "full" ? "border-cyan-600 bg-cyan-50 text-cyan-700" : "border-slate-300 hover:bg-slate-100"}`}
-            href={`/tree/${personId}?ancestorsDepth=${ancestorsDepth}&descendantsDepth=${descendantsDepth}&view=full`}
-          >
-            Full tree
-          </a>
-        </div>
-        <TreeExplorer
-          key={`${personId}-${ancestorsDepth}-${descendantsDepth}-${view}`}
-          rootPersonId={personId}
-          nodes={graph.nodes}
-          edges={graph.edges}
-          lineage={graph.lineage ?? []}
-          descendants={descendants}
-          ancestorsDepth={ancestorsDepth}
-          descendantsDepth={descendantsDepth}
-          view={view}
-        />
+          {descendantsTree ? (
+            <ul className="mt-4">
+              <DescendantsList node={descendantsTree} rootId={personId} />
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">No descendants listed in this record.</p>
+          )}
+        </section>
       </section>
     </main>
   );
+}
+
+function countDescendants(node: DescendantsTreeNode): number {
+  let count = 1;
+  for (const child of node.children) count += countDescendants(child);
+  return count;
 }

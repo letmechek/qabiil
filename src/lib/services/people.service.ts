@@ -533,6 +533,83 @@ export async function getDirectDescendants(sourcePersonId: number) {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type DescendantsTreeNode = {
+  source_person_id: number;
+  name: string;
+  children: DescendantsTreeNode[];
+};
+
+export async function getDescendantsTree(
+  rootPersonId: number,
+  options?: {
+    maxDepth?: number;
+    maxNodes?: number;
+  },
+) {
+  const maxDepth = Math.max(1, options?.maxDepth ?? 10);
+  const maxNodes = Math.max(10, options?.maxNodes ?? 1200);
+
+  const root = await getPersonById(rootPersonId);
+  if (!root) return null;
+
+  const rootNode: DescendantsTreeNode = {
+    source_person_id: rootPersonId,
+    name: getBestDescendantName(root, `Person ${rootPersonId}`) ?? `Person ${rootPersonId}`,
+    children: [],
+  };
+
+  const nodeById = new Map<number, DescendantsTreeNode>([[rootPersonId, rootNode]]);
+  const visited = new Set<number>([rootPersonId]);
+  let currentLevel: number[] = [rootPersonId];
+  let depth = 0;
+
+  while (currentLevel.length && depth < maxDepth && nodeById.size < maxNodes) {
+    const levelResults = await Promise.all(
+      currentLevel.map(async (parentId) => ({
+        parentId,
+        children: await getDirectDescendants(parentId),
+      })),
+    );
+
+    const nextLevel: number[] = [];
+
+    for (const { parentId, children } of levelResults) {
+      const parentNode = nodeById.get(parentId);
+      if (!parentNode) continue;
+
+      const dedupedChildren = new Map<number, { source_person_id: number; name: string }>();
+      for (const child of children) {
+        if (child.source_person_id === parentId) continue;
+        if (!dedupedChildren.has(child.source_person_id)) {
+          dedupedChildren.set(child.source_person_id, child);
+        }
+      }
+
+      const sortedChildren = Array.from(dedupedChildren.values()).sort((a, b) => a.name.localeCompare(b.name));
+      for (const child of sortedChildren) {
+        if (visited.has(child.source_person_id)) continue;
+        if (nodeById.size >= maxNodes) break;
+
+        const childNode: DescendantsTreeNode = {
+          source_person_id: child.source_person_id,
+          name: child.name,
+          children: [],
+        };
+
+        parentNode.children.push(childNode);
+        nodeById.set(child.source_person_id, childNode);
+        visited.add(child.source_person_id);
+        nextLevel.push(child.source_person_id);
+      }
+    }
+
+    currentLevel = nextLevel;
+    depth += 1;
+  }
+
+  return rootNode;
+}
+
 function getSiblingRefs(person: PersonDoc) {
   const refs = new Map<number, { source_person_id: number; name?: string }>();
   const groups = person.siblings_groups ?? [];
