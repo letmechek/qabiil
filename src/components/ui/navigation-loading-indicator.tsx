@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 function isPrimaryClick(event: MouseEvent) {
@@ -9,10 +9,10 @@ function isPrimaryClick(event: MouseEvent) {
 
 export function NavigationLoadingIndicator() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const timeoutRef = useRef<number | null>(null);
   const startedAtRef = useRef<number>(0);
+  const lastSeenUrlRef = useRef<string>("");
 
   useEffect(() => {
     const startLoading = () => {
@@ -53,6 +53,7 @@ export function NavigationLoadingIndicator() {
 
     document.addEventListener("click", onClick, true);
     document.addEventListener("submit", onSubmit, true);
+    lastSeenUrlRef.current = `${window.location.pathname}${window.location.search}`;
 
     return () => {
       document.removeEventListener("click", onClick, true);
@@ -63,6 +64,9 @@ export function NavigationLoadingIndicator() {
 
   useEffect(() => {
     if (!isLoading) return;
+    const currentUrl = typeof window === "undefined" ? "" : `${window.location.pathname}${window.location.search}`;
+    if (currentUrl === lastSeenUrlRef.current) return;
+    lastSeenUrlRef.current = currentUrl;
     const elapsed = Date.now() - startedAtRef.current;
     const remaining = Math.max(0, 450 - elapsed);
     const doneTimer = window.setTimeout(() => {
@@ -73,7 +77,7 @@ export function NavigationLoadingIndicator() {
       }
     }, remaining);
     return () => window.clearTimeout(doneTimer);
-  }, [pathname, searchParams, isLoading]);
+  }, [pathname, isLoading]);
 
   if (!isLoading) return null;
 

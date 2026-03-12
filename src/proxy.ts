@@ -4,7 +4,7 @@ import { getToken } from "next-auth/jwt";
 
 const protectedPagePrefixes = ["/edit", "/requests", "/admin"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   const isProtectedPage = protectedPagePrefixes.some((prefix) =>

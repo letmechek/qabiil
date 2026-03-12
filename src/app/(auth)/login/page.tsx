@@ -1,8 +1,13 @@
-import { Suspense } from "react";
-
 import { LoginForm } from "@/components/ui/login-form";
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  const query = await searchParams;
+  const callbackUrl = query.callbackUrl && query.callbackUrl.startsWith("/") ? query.callbackUrl : "/";
+
   return (
     <main className="container-shell py-10">
       <section className="card mx-auto max-w-md p-6">
@@ -10,10 +15,7 @@ export default function LoginPage() {
         <p className="mt-2 text-sm text-slate-600">
           Browsing is always public. Authentication is only for write actions.
         </p>
-
-        <Suspense fallback={<p className="mt-4 text-sm text-slate-600">Loading form...</p>}>
-          <LoginForm />
-        </Suspense>
+        <LoginForm callbackUrl={callbackUrl} />
       </section>
     </main>
   );
