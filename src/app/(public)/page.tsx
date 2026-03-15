@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Space_Grotesk } from "next/font/google";
 
+import { HomeSearchBar } from "@/components/ui/home-search-bar";
 import { searchPeople } from "@/lib/services/search.service";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,7 @@ export default async function HomePage() {
 
   return (
     <main className={`${spaceGrotesk.className} container-shell py-6`}>
-      <section className="somali-future-shell relative overflow-hidden rounded-3xl border border-cyan-100 px-6 py-8 sm:px-10 sm:py-12">
+      <section className="somali-future-shell relative z-20 overflow-visible rounded-3xl border border-cyan-100 px-6 py-8 sm:px-10 sm:py-12">
         <div className="somali-grid-overlay" />
         <div className="somali-orb somali-orb-top" />
         <div className="somali-orb somali-orb-bottom" />
@@ -71,21 +72,7 @@ export default async function HomePage() {
             explorer built for depth and clarity.
           </p>
 
-          <form action="/search" method="get" className="mt-7">
-            <div className="search-glow-shell flex flex-col gap-3 rounded-2xl border border-cyan-200/80 bg-white/80 p-3 backdrop-blur sm:flex-row sm:items-center">
-              <input
-                name="q"
-                placeholder="Try: Ismaeil Saleiban Mahamed"
-                className="h-12 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100"
-              />
-              <button
-                type="submit"
-                className="h-12 rounded-xl bg-cyan-700 px-5 text-sm font-semibold tracking-wide text-white transition hover:bg-cyan-800"
-              >
-                Search Lineage
-              </button>
-            </div>
-          </form>
+          <HomeSearchBar />
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Link href="/search?q=Darod" className="rounded-full border border-cyan-200 bg-white/70 px-3 py-1 text-sm text-cyan-800 hover:bg-cyan-50">

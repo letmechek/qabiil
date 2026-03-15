@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type SearchResult = {
   _id: string;
@@ -11,41 +11,62 @@ type SearchResult = {
 };
 
 export default function SearchPage() {
-  const initialQuery = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    const params = new URLSearchParams(window.location.search);
-    return params.get("q") ?? "";
-  }, []);
-
-  const [q, setQ] = useState(initialQuery);
+  const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
+  const [resultSuggestions, setResultSuggestions] = useState<SearchResult[]>([]);
+  const [dropdownSuggestions, setDropdownSuggestions] = useState<SearchResult[]>([]);
   const [didYouMean, setDidYouMean] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [lastQuery, setLastQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const suggestionRequestId = useRef(0);
 
   async function loadResults(query: string) {
     setLoading(true);
-    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-    const data = await res.json();
-    setResults(data.results ?? []);
-    setSuggestions(data.suggestions ?? []);
-    setDidYouMean(data.didYouMean ?? null);
-    setLoading(false);
+    setError(null);
+    setLastQuery(query);
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      setResults(data.results ?? []);
+      setResultSuggestions(data.suggestions ?? []);
+      setDidYouMean(data.didYouMean ?? null);
+    } catch {
+      setError("Search failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadSuggestions(query: string) {
-    const res = await fetch(`/api/search?suggest=true&limit=8&q=${encodeURIComponent(query)}`);
-    const data = await res.json();
-    setSuggestions(data.suggestions ?? []);
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setDropdownSuggestions([]);
+      setSuggesting(false);
+      return;
+    }
+
+    const currentId = suggestionRequestId.current + 1;
+    suggestionRequestId.current = currentId;
+    setSuggesting(true);
+    try {
+      const res = await fetch(`/api/search?suggest=true&limit=8&q=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (suggestionRequestId.current !== currentId) return;
+      setDropdownSuggestions(data.suggestions ?? []);
+    } finally {
+      if (suggestionRequestId.current === currentId) setSuggesting(false);
+    }
   }
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadResults(initialQuery);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [initialQuery]);
+    const params = new URLSearchParams(window.location.search);
+    const initialQuery = params.get("q") ?? "";
+    setQ(initialQuery);
+    void loadResults(initialQuery);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -94,9 +115,9 @@ export default function SearchPage() {
               </button>
             </div>
 
-            {isFocused && suggestions.length > 0 ? (
+            {isFocused && (dropdownSuggestions.length > 0 || suggesting) ? (
               <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
-                {suggestions.map((person) => (
+                {dropdownSuggestions.map((person) => (
                   <button
                     key={person._id}
                     type="button"
@@ -114,29 +135,72 @@ export default function SearchPage() {
                     </span>
                   </button>
                 ))}
+                {suggesting ? (
+                  <p className="px-4 py-3 text-sm text-slate-500">Looking up similar names...</p>
+                ) : null}
               </div>
             ) : null}
           </div>
         </form>
-        {didYouMean ? (
-          <p className="mt-3 text-sm text-slate-600">
-            Did you mean{" "}
-            <button
-              type="button"
-              className="font-semibold text-cyan-700 underline"
-              onClick={() => {
-                setQ(didYouMean);
-                void loadResults(didYouMean);
-              }}
-            >
-              {didYouMean}
-            </button>
-            ?
-          </p>
-        ) : null}
+          <div className="mt-3">
+          {loading ? (
+            <p className="text-sm font-medium text-cyan-700">
+              Searching for &quot;{q || "all people"}&quot;...
+            </p>
+          ) : error ? (
+            <p className="text-sm text-rose-600">{error}</p>
+          ) : lastQuery.trim() ? (
+            <p className="text-sm text-slate-600">
+              Found <span className="font-semibold">{results.length}</span> result{results.length === 1 ? "" : "s"} for{" "}
+              <span className="font-semibold">&quot;{lastQuery.trim()}&quot;</span>.
+            </p>
+          ) : (
+            <p className="text-sm text-slate-500">Type a name or lineage and press search.</p>
+          )}
+        </div>
       </section>
 
       <section className="mt-4 grid gap-3">
+        {!loading && !error && lastQuery.trim() && results.length === 0 ? (
+          <article className="card p-5">
+            <h2 className="text-lg font-semibold">No results found</h2>
+            <p className="mt-1 text-sm text-slate-600">Try a different spelling or a shorter lineage chain.</p>
+            {didYouMean ? (
+              <p className="mt-3 text-sm text-slate-600">
+                Did you mean{" "}
+                <button
+                  type="button"
+                  className="font-semibold text-cyan-700 underline"
+                  onClick={() => {
+                    setQ(didYouMean);
+                    void loadResults(didYouMean);
+                  }}
+                >
+                  {didYouMean}
+                </button>
+                ?
+              </p>
+            ) : null}
+            {resultSuggestions.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {resultSuggestions.slice(0, 6).map((person) => (
+                  <button
+                    key={person._id}
+                    type="button"
+                    className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setQ(person.name);
+                      void loadResults(person.name);
+                    }}
+                  >
+                    {person.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        ) : null}
+
         {results.map((person) => (
           <Link key={person._id} className="card p-4" href={`/p/${person.id}`}>
             <p className="font-semibold">{person.name}</p>
