@@ -59,19 +59,36 @@ export function HomeSearchBar() {
   return (
     <form onSubmit={onSubmit} className="mt-7">
       <div className="relative z-30">
-        <div className="search-glow-shell flex flex-col gap-3 rounded-2xl border border-cyan-200/80 bg-white/80 p-3 backdrop-blur sm:flex-row sm:items-center">
-          <input
-            name="q"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setTimeout(() => setIsFocused(false), 120)}
-            placeholder="Try: Osman Mahamud Saleiban Mahamed"
-            className="h-12 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100"
-          />
+        <div className="search-glow-shell home-search-shell rounded-3xl border border-cyan-200/80 bg-white/85 p-4 shadow-[0_18px_40px_rgba(14,116,144,0.14)] backdrop-blur sm:flex sm:items-center sm:gap-3 sm:rounded-2xl sm:p-3 sm:shadow-none">
+          <label className="mb-2 block text-[11px] font-semibold tracking-[0.16em] text-cyan-700 uppercase sm:hidden">
+            Search Lineage
+          </label>
+          <div className="relative flex-1">
+            <svg
+              aria-hidden
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-cyan-700/70"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              name="q"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setTimeout(() => setIsFocused(false), 120)}
+              placeholder="Try: Osman Mahamud Saleiban Mahamed"
+              className="h-14 w-full rounded-2xl border border-cyan-100 bg-white px-12 text-lg font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 sm:h-12 sm:rounded-xl sm:px-11 sm:text-base sm:font-normal"
+            />
+          </div>
           <button
             type="submit"
-            className="h-12 rounded-xl bg-cyan-700 px-5 text-sm font-semibold tracking-wide text-white transition hover:bg-cyan-800"
+            className="mt-3 h-14 w-full rounded-2xl bg-gradient-to-r from-cyan-700 to-sky-700 px-6 text-base font-semibold tracking-wide text-white shadow-[0_8px_20px_rgba(8,145,178,0.35)] transition hover:from-cyan-800 hover:to-sky-800 sm:mt-0 sm:h-12 sm:w-auto sm:rounded-xl sm:px-5 sm:text-sm sm:shadow-none"
           >
             Search Lineage
           </button>
@@ -83,7 +100,7 @@ export function HomeSearchBar() {
               <button
                 key={person._id}
                 type="button"
-                className="flex w-full items-start justify-between border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50"
+                className="flex w-full items-start justify-between border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50 sm:px-4 sm:py-3"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   setQ(person.name);
@@ -91,7 +108,7 @@ export function HomeSearchBar() {
                   setIsFocused(false);
                 }}
               >
-                <span className="font-medium text-slate-900">{person.name}</span>
+                <span className="text-base font-semibold text-slate-900 sm:text-sm sm:font-medium">{person.name}</span>
                 <span className="ml-4 text-xs text-slate-500">{person.lineage_first_name ?? "Unknown lineage"}</span>
               </button>
             ))}
